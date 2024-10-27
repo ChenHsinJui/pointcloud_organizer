@@ -9,6 +9,7 @@ import numpy as np
 from operator import itemgetter
 from array import array
 
+import rosbag2_py._storage
 from sensor_msgs.msg import PointCloud2, PointField
 from rclpy.serialization import deserialize_message, serialize_message
 from rosidl_runtime_py.utilities import get_message
@@ -76,9 +77,8 @@ class OrganizeBag(object):
                 float_data = np.array(ele, dtype=np.float32)
                 binary_data = float_data.tobytes()
                 uint_data = np.frombuffer(binary_data, dtype=np.uint8)
-                
                 data.extend(list(uint_data))
-                data.extend(self._point_id)
+            data.extend(self._point_id)
         return array('B',data)
 
     def rip_out_redundant(self, points):
@@ -89,10 +89,12 @@ class OrganizeBag(object):
                            2: lambda points_array: min(points_array, key=x_getter), 3: lambda points_array: min(points_array, key=z_getter)}
         height = num_points//self._horizontal_resol
         res = num_points%self._horizontal_resol
+        
         for i in range(res):
             getter = iterator_getter[i%4]
             points.remove(getter(points))
         assert len(points)!=num_points or res==0, "You didn't rip out any points"
+        # logging.debug("There are {} points to be ripped off, before {} points and {} after.".format(res,num_points,len(points)))
         return points, height
 
 
@@ -107,12 +109,13 @@ class OrganizeBag(object):
         
         points = self.convert_from_byte(target_data)
         assert len(points) == len(target_data), "The length of decoded points array didn't match the length of the given splitted points arrray."
-        print(points[0])
         ### TODO: points processing, contains height calculation
         result_points, height = self.rip_out_redundant(points)
         ###
         data = self.convert_to_byte(result_points)
-        return data, len(data), height
+        # logging.debug("row_step before {}, and after {}".format(row_step,len(data)))
+        assert len(data)<=row_step, "The output row step is unexpectedly wrong."
+        return data, int(len(data)/self._horizontal_resol), height
 
     def get_pointcloud(self,unorganized_msg):
         msg = PointCloud2()
@@ -122,7 +125,7 @@ class OrganizeBag(object):
         msg.width = self._horizontal_resol
 
         msg.data, msg.row_step, msg.height = self.generate_pc_data(unorganized_msg.data, unorganized_msg.row_step, unorganized_msg.point_step)
-        print("the row step of unorganized msg is {}, while after organizing the row step is {}".format(unorganized_msg.row_step, msg.row_step))
+        # logging.debug("the row step of unorganized msg is {}, while after organizing the row step is {}".format(unorganized_msg.row_step, msg.row_step))
         msg.is_dense = unorganized_msg.is_dense
         return msg
 
@@ -134,7 +137,9 @@ class OrganizeBag(object):
             storage_filter = rosbag2_py._storage.StorageFilter(topics=self._topics)
             self._reader.set_filter(storage_filter)
         topic_name2type = {topic_metadata.name: topic_metadata.type for topic_metadata in self._reader.get_all_topics_and_types()}
-
+        # metadata = self._reader.get_metadata()
+        # logging.debug("{}".format(metadata))
+        # print(metadata.starting_time)
         ### open rosbag writer
         self._writer.open(
             rosbag2_py.StorageOptions(uri=str(output_path), storage_id="sqlite3"),
@@ -159,8 +164,8 @@ class OrganizeBag(object):
                 output_msg = msg
             self._writer.write(topic_name,serialize_message(output_msg),self.to_nano(msg.header.stamp))
         del self._writer
-
-
+        # rosbag2_py._storage.MetadataIo.write_metadata(output_path,metadata)
+        # rosbag2_py.MetadataIo().write_metadata(output_path,metadata)
 
 def main():
   parser = argparse.ArgumentParser(description="echo ros2 bag topic")
@@ -171,11 +176,12 @@ def main():
   parser.add_argument('extra_args', nargs='*', help=argparse.SUPPRESS)
   args=parser.parse_args()
 
-  if not os.path.isfile(args.bag):
+
+  if not os.path.exists(args.bag):
       logging.error("%s is not found!" %args.bag)
       return
-  if os.path.isfile(args.output_path):
-      logging.error("%s exist, pick another file path" %args.output)
+  if os.path.exists(args.output_path):
+      logging.error("%s exist, pick another file path" %args.output_path)
       return
   bag = OrganizeBag(args.bag, args.topics)
   
