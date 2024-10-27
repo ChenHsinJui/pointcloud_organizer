@@ -63,10 +63,6 @@ class OrganizeBag(object):
         for topic_name in msg_cnts:
             logging.info("topic %s msg cnt is %d" % (topic_name, msg_cnts[topic_name]))
 
-    def to_nano(self, stamp):
-        print(int(stamp.sec), int(stamp.nanosec))
-        return int(stamp.sec) * int(1e9) + int(stamp.nanosec)
-
     def convert_from_byte(self, target_points):
         points = []
         for point in target_points:
